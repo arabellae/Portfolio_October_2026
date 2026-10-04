@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lava Home – Portfolio Prototype</title>
+<style>
+  :root { --ink:#1B1D2A; --blue:#A9BDF0; --pink:#F6C9E8; --butter:#F4F3B0; --mint:#CDEBE3; }
+  * { box-sizing:border-box; margin:0; }
+  html,body { height:100%; }
+  body { background:var(--blue); font-family:Inter,system-ui,sans-serif; color:var(--ink); overflow:hidden; }
+  #gl { position:fixed; inset:0; width:100%; height:100%; display:block; }
+
+  .glass { background:rgba(255,255,255,.35); border:1px solid rgba(255,255,255,.65); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px); }
+  header { position:fixed; top:32px; left:40px; right:40px; display:flex; justify-content:space-between; align-items:flex-start; z-index:2; pointer-events:none; }
+  header > * { pointer-events:auto; }
+  h1 { font-size:28px; font-weight:700; letter-spacing:-.02em; margin-bottom:16px; }
+  .bio { width:240px; padding:16px; border-radius:20px; font-size:14px; line-height:20px; }
+  .pills { display:flex; gap:8px; }
+  .pill { padding:10px 20px; border-radius:999px; font-size:14px; font-weight:500; color:var(--ink); text-decoration:none; transition:transform .2s; }
+  .pill:hover { transform:translateY(-2px); }
+  .pill.dark { background:var(--ink); color:#fff; border-color:var(--ink); }
+
+  .folder { position:fixed; z-index:2; display:flex; flex-direction:column; align-items:center; gap:10px; font-size:14px; font-weight:500; cursor:pointer; transition:transform .3s cubic-bezier(.2,.8,.2,1); }
+  .folder:hover { transform:translateY(-6px) rotate(-3deg) scale(1.06); }
+  .folder .icon { width:96px; height:78px; border-radius:14px; border:2px solid #fff; box-shadow:0 8px 24px rgba(27,29,42,.12); }
+
+  .hint { position:fixed; left:50%; bottom:36px; transform:translateX(-50%); z-index:2; padding:8px 16px; border-radius:999px; font-size:13px; transition:opacity .6s; }
+  footer { position:fixed; right:40px; bottom:40px; font-size:13px; z-index:2; }
+  @media (max-width:700px) { header { left:20px; right:20px; top:20px; flex-direction:column; gap:16px; } .folder .icon { width:72px; height:58px; } }
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+
+<header>
+  <div>
+    <h1>Your Name</h1>
+    <div class="bio glass">Product designer making digital experiences human-centered and a little playful.</div>
+  </div>
+  <nav class="pills">
+    <a class="pill glass" href="#">Email</a>
+    <a class="pill glass" href="#">LinkedIn</a>
+    <a class="pill glass dark" href="#">Resume</a>
+  </nav>
+</header>
+
+<div class="folder" style="left:20%;top:30%"><div class="icon" style="background:var(--butter)"></div>Work</div>
+<div class="folder" style="left:50%;top:22%"><div class="icon" style="background:var(--mint)"></div>About</div>
+<div class="folder" style="left:36%;top:56%"><div class="icon" style="background:var(--pink)"></div>Playground</div>
+<div class="folder" style="left:72%;top:46%"><div class="icon" style="background:#fff;width:76px;height:96px;border-radius:8px"></div>CV.pdf</div>
+<div class="folder" style="left:80%;top:70%"><div class="icon" style="background:var(--blue)"></div>Contact</div>
+
+<div class="hint glass" id="hint">move your cursor through the lamp</div>
+<footer>last updated Oct '26</footer>
+
+<script id="vs" type="x-shader/x-vertex">#version 300 es
+in vec2 a; void main(){ gl_Position = vec4(a,0.,1.); }
+</script>
+<script id="fs" type="x-shader/x-fragment">#version 300 es
+precision highp float;
+#define N 8
+uniform vec2  uRes;
+uniform float uTime;
+uniform vec3  uBlob[N];   // xy = center (aspect-corrected units), z = radius
+uniform vec3  uCol[N];
+uniform vec3  uBase;
+uniform vec3  uMouse;     // xy position, z = strength 0..1
+out vec4 o;
+
+float hash(vec2 p){ p = fract(p*vec2(123.34,456.21)); p += dot(p,p+45.32); return fract(p.x*p.y); }
+float noise(vec2 p){
+  vec2 i=floor(p), f=fract(p); f=f*f*(3.-2.*f);
+  return mix(mix(hash(i),hash(i+vec2(1,0)),f.x), mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x), f.y);
+}
+
+void main(){
+  vec2 uv = gl_FragCoord.xy / uRes.y;           // height = 1, width = aspect
+  // slow domain warp makes every blob outline lumpy and ever-changing
+  vec2 w = vec2(noise(uv*1.6 + uTime*.008), noise(uv*1.6 - uTime*.006 + 7.3)) - .5;
+  vec2 p = uv + w*.28;
+
+  vec3 acc = vec3(0.); float sum = 0.;
+  for(int i=0;i<N;i++){
+    vec2 d = p - uBlob[i].xy;
+    float ang = atan(d.y,d.x);
+    float r = uBlob[i].z * (1. + .28*sin(ang*3. + uTime*.02 + float(i)*1.7) + .16*sin(ang*5. - uTime*.015 + float(i)*2.9));
+    float f = exp(-dot(d,d)/(r*r));              // gaussian falloff = soft, diffused edge
+    acc += uCol[i]*f; sum += f;
+  }
+  vec3 blobCol = acc / max(sum, 1e-4);
+  float cover = smoothstep(.0, .9, sum);          // how much blob vs. background
+  vec3 col = mix(uBase, blobCol, cover);
+
+  // cursor: warm light that blooms around the pointer
+  float md = length(uv - uMouse.xy);
+  col += vec3(1.,.97,.9) * exp(-md*md/.035) * .22 * uMouse.z;
+
+  // grain
+  float g = hash(gl_FragCoord.xy + fract(uTime)*91.7) - .5;
+  col += g * .075;
+  o = vec4(col, 1.);
+}
+</script>
+
+<script>
+(() => {
+  const canvas = document.getElementById('gl');
+  const gl = canvas.getContext('webgl2', { antialias:false });
+  if (!gl) { document.body.style.background = '#A9BDF0'; return; }
+
+  const N = 8;
+  const hex = h => [1,3,5].map(i => parseInt(h.slice(i, i+2), 16) / 255);
+  const palette = ['#F7F29A','#FFB3DF','#A8EBD6','#B79CFF','#FFC9A0','#FFFFFF','#FF9FD0','#8FA8F0'].map(hex);
+  const base = hex('#A9BDF0');
+
+  function sh(type, src) {
+    const s = gl.createShader(type); gl.shaderSource(s, src.trim()); gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(s));
+    return s;
+  }
+  const prog = gl.createProgram();
+  gl.attachShader(prog, sh(gl.VERTEX_SHADER, document.getElementById('vs').textContent));
+  gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, document.getElementById('fs').textContent));
+  gl.linkProgram(prog); gl.useProgram(prog);
+
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 3,-1, -1,3]), gl.STATIC_DRAW);
+  const loc = gl.getAttribLocation(prog, 'a');
+  gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+
+  const U = n => gl.getUniformLocation(prog, n);
+  const uRes = U('uRes'), uTime = U('uTime'), uBlob = U('uBlob[0]'), uCol = U('uCol[0]'), uBase = U('uBase'), uMouse = U('uMouse');
+  gl.uniform3fv(uCol, new Float32Array(palette.flat()));
+  gl.uniform3fv(uBase, base);
+
+  let W = 0, H = 0, aspect = 1;
+  function resize() {
+    const dpr = Math.min(devicePixelRatio || 1, 1.5);
+    W = canvas.width = Math.round(innerWidth * dpr);
+    H = canvas.height = Math.round(innerHeight * dpr);
+    aspect = W / H;
+    gl.viewport(0, 0, W, H);
+    gl.uniform2f(uRes, W, H);
+  }
+  addEventListener('resize', resize); resize();
+
+  // CPU side: very slow wandering + gentle push from cursor
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const blobs = Array.from({ length: N }, (_, i) => ({
+    x: Math.random() * aspect, y: Math.random(), vx: 0, vy: 0,
+    r: .20 + Math.random() * .14,
+    px: Math.random() * 100, py: Math.random() * 100,
+    sx: .004 + Math.random() * .005, sy: .003 + Math.random() * .005
+  }));
+  const mouse = { x: .5, y: .5, tx: .5, ty: .5, s: 0, ts: 0 };
+  addEventListener('pointermove', e => {
+    mouse.tx = e.clientX / innerHeight; mouse.ty = 1 - e.clientY / innerHeight; mouse.ts = 1;
+    document.getElementById('hint').style.opacity = 0;
+  });
+  document.addEventListener('pointerleave', () => mouse.ts = 0);
+
+  const data = new Float32Array(N * 3);
+  let last = performance.now();
+  function frame(now) {
+    const dt = Math.min(50, now - last); last = now; const k = dt / 16.67, t = now / 1000;
+
+    mouse.x += (mouse.tx - mouse.x) * .06 * k; mouse.y += (mouse.ty - mouse.y) * .06 * k;
+    mouse.s += (mouse.ts - mouse.s) * .04 * k;
+
+    blobs.forEach((b, i) => {
+      const tx = aspect * (.5 + .45 * Math.sin(t * b.sx + b.px));
+      const ty = .5 + .45 * Math.cos(t * b.sy + b.py);
+      let ax = (tx - b.x) * .00003, ay = (ty - b.y) * .00003;
+      if (!reduced && mouse.s > .01) {
+        const dx = b.x - mouse.x, dy = b.y - mouse.y, d = Math.hypot(dx, dy) || 1, reach = b.r * 2.2;
+        if (d < reach) {
+          const f = (1 - d / reach) ** 2 * .0004 * mouse.s;
+          ax += dx / d * f - dy / d * f * .4; ay += dy / d * f + dx / d * f * .4;   // push + slight swirl
+        }
+      }
+      b.vx = (b.vx + ax * k) * Math.pow(.96, k); b.vy = (b.vy + ay * k) * Math.pow(.96, k);
+      b.x += b.vx * k; b.y += b.vy * k;
+      data[i*3] = b.x; data[i*3+1] = b.y; data[i*3+2] = b.r;
+    });
+
+    gl.uniform3fv(uBlob, data);
+    gl.uniform1f(uTime, t);
+    gl.uniform3f(uMouse, mouse.x * 1, mouse.y, mouse.s);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
